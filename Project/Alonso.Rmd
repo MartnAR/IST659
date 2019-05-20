@@ -1,0 +1,135 @@
+---
+title: "Alonso_Project 2 Deliverable"
+author: "Martin Alonso"
+date: "June 27, 2018"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(RODBC)
+library(stargazer)
+con <- odbcDriverConnect('driver={SQL Server};server=DESKTOP-EU58VDQ\\SQLEXPRESS;database=IST659_Project;trusted_connection=true')
+pt1 <- sqlQuery(con, "SELECT playerID, concat(first_name, ' ', last_name) as player_name, TeamID, inning, COUNT(pitch_of_pa) as pitches_thrown
+                      FROM Player
+                      JOIN Plate_Appearance ON Player.playerID = Plate_Appearance.pitcherID
+                      JOIN Pitch_event ON Plate_Appearance.plate_appearance_id = Pitch_event.plate_appearance_id
+                      WHERE last_name = 'Urena'
+                      GROUP BY playerID, first_name, last_name, TeamID, inning")
+pt2 <- sqlQuery(con, "SELECT playerID, concat(first_name, ' ', last_name) as player_name, TeamID, inning, Pitch_name, COUNT(pitch_of_pa) as pitches_thrown
+                      FROM Player
+                      JOIN Plate_Appearance ON Player.playerID = Plate_Appearance.pitcherID
+                      JOIN Pitch_event ON Plate_Appearance.plate_appearance_id = Pitch_event.plate_appearance_id
+                      JOIN Pitch_type ON Pitch_event.pitch_type = Pitch_type.Pitch_type
+                      WHERE last_name = 'Urena'
+                      GROUP BY playerID, first_name, last_name, TeamID, inning, Pitch_name
+                      ORDER BY pitches_thrown")
+pt3 <- sqlQuery(con, "SELECT playerID, CONCAT(first_name, ' ', last_name) AS player_name, TeamID, inning, Pitch_name, COUNT(pitch_of_pa) AS pitches_thrown,
+                      	   ROUND(AVG(release_point), 1) AS avg_release_point, 
+                      	   ROUND(AVG(velocity), 1) AS avg_velo, 
+                      	   ROUND(AVG(x_movement), 2) AS avg_x_movement, 
+                      	   ROUND(AVG(z_movement), 2) AS avg_z_movement
+                      FROM Player
+                      JOIN Plate_Appearance ON Player.playerID = Plate_Appearance.pitcherID
+                      JOIN Pitch_event ON Plate_Appearance.plate_appearance_id = Pitch_event.plate_appearance_id
+                      JOIN Pitch_type ON Pitch_event.pitch_type = Pitch_type.Pitch_type
+                      JOIN Pitch ON Pitch_event.pitchID = Pitch.pitchID
+                      WHERE last_name = 'Urena'
+                      GROUP BY playerID, first_name, last_name, TeamID, inning, Pitch_name
+                      ORDER BY pitches_thrown")
+
+pt4 <- sqlQuery(con, "SELECT playerID, CONCAT(first_name, ' ', last_name) AS player_name, TeamID, inning, Pitch_name, result, COUNT(pitch_of_pa) AS pitches_thrown
+                      FROM Player
+                      JOIN Plate_Appearance ON Player.playerID = Plate_Appearance.pitcherID
+                      JOIN Pitch_event ON Plate_Appearance.plate_appearance_id = Pitch_event.plate_appearance_id
+                      JOIN Pitch_type ON Pitch_event.pitch_type = Pitch_type.Pitch_type
+                      WHERE last_name = 'Urena'
+                      GROUP BY playerID, first_name, last_name, TeamID, inning, Pitch_name, result
+                      ORDER BY pitch_name, result, pitches_thrown")
+```
+# 1. Summary and Business Case
+This project looks to create a pitch usage database that tracks the types of pitches thrown by professional baseball players as well as the events surrounding their decisions to use certain pitches, while also monitoring the movement of these pitches, starting from the release point out of the pitchers hand up to the moment the pitch reaches the plate. The importance of creating such a database will let us better understand the physics behind each pitch thrown by major league pitchers, as well as understand the effects of pitch sequencing and game theory regarding individual pitcher-batter matchups and decisions made.  
+As such, we first need to track every game that has been played. Every game will have multiple events, but each event must be assigned to one game. Each event will involve two teams, a fielding team with a pitcher and a batting team with a batter involved. Only one batter and one pitcher can be involved in one single event, though there can be multiple separate events involving the same pitcher and batter. Because of this, each event must occur sequentially, tracking the inning, outs, plate appearance, pitch used, pitch of the sequence, result of the pitch (ball, foul, or strike), outcome (strike out, hit, walk, etc.), men on base (first, second, third), the score, and the plate appearance of the inning. This must be done for every pitch thrown in every single game.  
+Each pitch must be assigned to a pitch type and each pitch can only have one pitch type, but there can be multiple pitches with different pitch types. Each pitch must also be related to a single pitcher, though a pitcher can throw multiple pitches of different pitch types. Each pitch thrown must also be linked to one and only one event. However, the pitch must also be linked to the pitch of the next event, so we can analyze pitch sequencing. Each pitch within the first event must have a distinct release point, trajectory, and movement (both on the x and z plane). Likewise, each pitch will end in one result, but many results can be traced backed to each pitch thrown.   
+On the player side, each game will feature players from two teams. Only two teams may play in any single game, and at least nine players from each team must be present. However, if the home team is from the American League, at least ten players will have to appear (given the DH-rule of the American League.) We must also know, for each team, what position each player has on the field (using baseball’s position guide, 1 through 10.) Each position must be played by a player on each team, but, given pitching changes, pinch hitters, pinch runners, defensive replacements, and injuries, many players could end up playing a single position in any given game.  
+  
+  
+# 2. Conceptual Model
+The database will need at least six tables that will work together to provide the necessary information for each plate appearance and every pitch that has been thrown throughout the seasons.  
+The Game table will provide the GameID, the date a game was played, and the Home and Away teams.   
+Both the HomeTeamID and the AwayTeamID will be fed from the Team table, which will have the TeamID, TeamCity, TeamName, and LeagueID, identifying the different teams that have played.  
+The GameID will work as the first foreign key that will help identify the different events that have occurred within a game. These events will be found in the Events table. Within this table, we will have the pitcherID, batterID, inning, half_inning (top or bot), and plate_appearance, provinding us with the context of every plate appearance that has occurred within the game. Similarly, the event will also have the pitchID of every pitch thrown in the plate appearance, along with the pitch_type, the pitch_of_pa, the result of the pitch (whether it was a ball or a strike), and the outcome (which will be ball and strike for every pitch that doesn’t end the plate appearance; for the rest, it will show what happened). The events table will also show, through the use of boolean values, whether there were men on first, second, or third, the count (by adding the previous pitches thrown), the outs, and the scores for both home and away teams.  
+Both the pitcherID and batterID will be linked to the Player table, which will provide the information for each player: his first_name, last_name, birth_date, height_in (in inches), weight_lbs (in pounds), TeamID (which will be linked to the Team table), season, and positionID for the main position the player played.  
+The positionID will be linked to the Position table where the names of each position will be taken from. PositionID will be an integer that goes from one to ten, using the standard notation for every baseball position (1 – pitcher, 2 – catcher, 3 – first base, 4 – second base, 5 – third base, 6 – shortstop, 7 – leftfield, 8 – centerfield, 9 – rightfield, 10 – designated hitter).  
+Going back to the events table, this table also features pitchID, which is a foreign key that will merge the Event table to the Pitch table. Within the Pitch table, we will find the pitchID and the pitch_type of the pitch thrown. We will also find the pitcherID (which will link from the Player table) and the eventID (which will link from the Event table). Finally, we will have the information regarding the movement of the pitch: release_point, velocity, x_movement, z_movement, max_plate_dist, max_plate_time, and next_pitch (which will be the pitchID of the next pitch thrown in the sequence). This will help us identify pitch sequencing used by the different pitchers.  
+  
+  
+# 3. Normalization
+
+
+# 4. Physical Database Design
+
+```
+`r paste(readLines('Project Table Creation.sql'), collapse = '\n\t')`
+```
+
+# 5. Data Creation
+
+```
+`r paste(readLines('Project Data Insert.sql'), collapse = '\n\t')`
+```
+
+# 6. Data Manipulation
+
+```
+`r paste(readLines('Project Procedures.sql'), collapse = '\n\t')`
+```
+
+# 7. Answering Data Questions
+
+```
+`r paste(readLines('Project Data Exploration - 1.sql'), collapse = '\n\t')`
+```  
+  
+## Number of pitches thrown by Jose Urena
+```{r results='pt1', echo=FALSE}
+knitr::kable(pt1)
+```  
+  
+```
+`r paste(readLines('Project Data Exploration - 2.sql'), collapse = '\n\t')`
+```  
+  
+## Number of pitches thrown by Jose Urena by pitch type
+```{r results='pt1', echo=FALSE}
+knitr::kable(pt2)
+```    
+  
+```
+`r paste(readLines('Project Data Exploration - 3.sql'), collapse = '\n\t')`
+```  
+  
+## Average release points, velocity, and movement for Urena's pitches
+```{r results='pt3', echo=FALSE}
+knitr::kable(pt3)
+```  
+  
+```
+`r paste(readLines('Project Data Exploration - 4.sql'), collapse = '\n\t')`
+```  
+  
+## Ball/Strike pitch split
+```{r results='pt4', echo=FALSE}
+knitr::kable(pt4)
+```  
+  
+# 8. Implementation  
+  
+  
+# 9. Reflection  
+After working extensively on this project, I realize that creating and upkeeping a database is hard work - not as simple as I had assumed going in. I thought I would be able to simplify a series of database tables already in existence, but to my chagrin, I only managed to reduce two tables from the original database tables.  
+If there are things that I would do differently, it would probably be on the events table. Though the information is useful to provide context, it could probably be omitted and merged with another of the tables using simplified notation.  
+Another thing that I would do differently would be the data insertion. The amount of data in existence is too much and needs to be fed into the tables another way (Excel could be an option, though also limited.)  
+Regarding information approach, in future events, the lessons learned lead me to think that this approach is better served by going bottom to top. Once the needs are established, understanding the purpose of the data and how it interacts between itself will help to create better, more robust, and easier to read data tables that - hopefully - will not need extensive joins or many lines of SQL code.  
+
+
